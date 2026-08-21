@@ -134,6 +134,15 @@ mod tests {
         GeoArrowError { message: [0; 1024] }
     }
 
+    /// geoarrow-c declares `struct GeoArrowError` as `char message[1024]`. A
+    /// caller passes the same struct to the two libraries, so the two layouts
+    /// must agree.
+    #[test]
+    fn layout_matches_geoarrow_c() {
+        assert_eq!(std::mem::size_of::<GeoArrowError>(), 1024);
+        assert_eq!(std::mem::align_of::<GeoArrowError>(), 1);
+    }
+
     #[test]
     fn finish_writes_code_and_message() {
         let mut sink = empty_sink();
