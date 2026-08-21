@@ -1,0 +1,11 @@
+[package]
+name = "geoarrow-ffi"
+version = "0.1.0"
+edition = "2024"
+description = "C API for geoarrow-rs, over the Arrow C Data Interface"
+repository = "https://github.com/willcohen/geoarrow-ffi"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "geoarrow_rs"
+crate-type = ["cdylib", "staticlib"]
