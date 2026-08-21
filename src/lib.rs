@@ -1,15 +1,25 @@
 //! A C ABI over geoarrow-rs, for callers that cannot link Rust directly.
 //!
-//! Arrays cross the boundary through the [Arrow C Data Interface], so no
-//! geospatial data is copied or reserialized.
+//! Arrays cross the boundary through the [Arrow C Data Interface]; no
+//! geospatial data is copied or reserialized. The type vocabulary is shared
+//! with [geoarrow-c], so one set of constants works with both libraries.
+//! Functions carry a `GeoArrowRs` prefix, so the two libraries can link into
+//! one program.
 //!
 //! [Arrow C Data Interface]: https://arrow.apache.org/docs/format/CDataInterface.html
+//! [geoarrow-c]: https://geoarrow.org/geoarrow-c
+
+mod error;
+mod schema;
+pub mod types;
 
 use std::ffi::c_void;
 use std::os::raw::c_char;
 
 use arrow_data::ffi::FFI_ArrowArray;
 use arrow_schema::ffi::FFI_ArrowSchema;
+pub use error::{GEOARROW_OK, GeoArrowError, GeoArrowErrorCode};
+pub use types::{GeoArrowCoordType, GeoArrowDimensions, GeoArrowEdgeType, GeoArrowType};
 
 /// Arrow C Data Interface `ArrowSchema`.
 ///
