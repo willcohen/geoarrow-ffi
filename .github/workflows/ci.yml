@@ -16,6 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Fresh checkout: the parity test compares against current geoarrow-c.
+      - name: Check out geoarrow-c
+        uses: actions/checkout@v7
+        with:
+          repository: geoarrow/geoarrow-c
+          path: geoarrow-c
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -27,3 +33,29 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
+        env:
+          GEOARROW_C_DIR: ${{ github.workspace }}/geoarrow-c
+      - name: C consumer test
+        run: |
+          cargo build
+          cc tests/consumer.c target/debug/libgeoarrow_rs.a -lpthread -ldl -lm -o target/consumer
+          cc -c tests/coexist.c -o target/coexist.o
+          # cpp_compat is a header claim; pin it with a real C++ compile.
+          c++ -x c++ -c tests/coexist.c -o target/coexist_cpp.o
+          ./target/consumer
+
+  header:
+    name: Header freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cbindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen@0.29.4
+      - name: Regenerate the header
+        run: cbindgen --output geoarrow_rs.h
+      - name: Diff against the committed header
+        run: git diff --exit-code geoarrow_rs.h

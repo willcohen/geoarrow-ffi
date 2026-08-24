@@ -9,3 +9,16 @@ license = "MIT OR Apache-2.0"
 [lib]
 name = "geoarrow_rs"
 crate-type = ["cdylib", "staticlib"]
+
+[profile.release]
+# Entry points contain panics with catch_unwind; panic=abort would void that
+# and turn any contained panic into a process abort across the C boundary.
+panic = "unwind"
+
+[dependencies]
+arrow-data = { version = "58", features = ["ffi"] }
+arrow-schema = { version = "58", features = ["ffi"] }
+geoarrow-schema = "0.8"
+
+[dev-dependencies]
+arrow-array = { version = "58", features = ["ffi"] }
