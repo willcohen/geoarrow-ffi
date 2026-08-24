@@ -266,6 +266,19 @@ void GeoArrowRsSchemaRelease(ArrowSchema *schema);
  */
 GeoArrowErrorCode GeoArrowRsSchemaType(const ArrowSchema *schema, GeoArrowType *out_type, struct GeoArrowError *error);
 
+/**
+ * Fill `out` with the Arrow schema for the geoarrow extension type named by
+ * `type_`, whose value also selects the dimensions and coordinate layout.
+ *
+ * On success the schema owns its allocations; release it with
+ * [`crate::GeoArrowRsSchemaRelease`].
+ *
+ * # Safety
+ * `out` must address a writable [`ArrowSchema`]. `crs_projjson` must be null
+ * or a NUL-terminated UTF-8 PROJJSON string.
+ */
+GeoArrowErrorCode GeoArrowRsSchemaInit(ArrowSchema *out, int32_t type_, int32_t edge_type, const char *crs_projjson, struct GeoArrowError *error);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

@@ -97,6 +97,23 @@ int main(void) {
   check(rc == GEOARROW_OK, "wkb schema returns GEOARROW_OK");
   check(type == GEOARROW_TYPE_WKB, "wkb schema reports GEOARROW_TYPE_WKB");
 
+  // Init -> Type round trip: a schema this library builds must read back as
+  // the same code, and the release entry point must run its callback.
+  struct ArrowSchema built;
+  memset(&built, 0, sizeof(built));
+  rc = GeoArrowRsSchemaInit(&built, GEOARROW_TYPE_INTERLEAVED_POINT_Z,
+                            GEOARROW_EDGE_TYPE_SPHERICAL, NULL, &error);
+  check(rc == GEOARROW_OK, "SchemaInit builds a spherical interleaved point z");
+  type = GEOARROW_TYPE_UNINITIALIZED;
+  rc = GeoArrowRsSchemaType(&built, &type, &error);
+  check(rc == GEOARROW_OK, "built schema reads back");
+  check(type == GEOARROW_TYPE_INTERLEAVED_POINT_Z, "round trip preserves the code");
+  GeoArrowRsSchemaRelease(&built);
+  check(built.release == NULL, "release runs the embedded callback");
+
+  rc = GeoArrowRsSchemaInit(&built, 99999, 0, NULL, &error);
+  check(rc == EINVAL, "unknown type code returns EINVAL");
+
   if (failures == 0) {
     printf("consumer ok: geoarrow-ffi %s\n", version);
   }

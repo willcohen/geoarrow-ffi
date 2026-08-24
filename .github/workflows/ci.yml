@@ -43,6 +43,10 @@ jobs:
           # cpp_compat is a header claim; pin it with a real C++ compile.
           c++ -x c++ -c tests/coexist.c -o target/coexist_cpp.o
           ./target/consumer
+      - name: Cross-library schema exchange
+        run: sh tests/cross.sh
+        env:
+          GEOARROW_C_DIR: ${{ github.workspace }}/geoarrow-c
 
   header:
     name: Header freshness
