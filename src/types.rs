@@ -12,7 +12,16 @@
 //! to BOX at 990, with the dimension slot left at its XY position: the type
 //! mixes dimensions per row, which the encoding cannot express.
 
-use geoarrow_schema::{CoordType, Dimension, GeoArrowType as RsType};
+use std::os::raw::c_char;
+use std::sync::Arc;
+
+use geoarrow_schema::{
+    BoxType, CoordType, Crs, Dimension, Edges, GeoArrowType as RsType, GeometryCollectionType,
+    GeometryType, LineStringType, Metadata, MultiLineStringType, MultiPointType, MultiPolygonType,
+    PointType, PolygonType, WkbType, WktType,
+};
+
+use crate::error::Error;
 
 #[repr(i32)]
 #[allow(non_camel_case_types)]
@@ -173,17 +182,121 @@ pub(crate) fn type_code(data_type: &RsType) -> i32 {
     }
 }
 
+/// `Planar` is the GeoArrow default and is encoded as the absence of an
+/// `edges` metadata key, hence `None` rather than a variant.
+fn edges(code: i32) -> Result<Option<Edges>, Error> {
+    match code {
+        0 => Ok(None),
+        1 => Ok(Some(Edges::Spherical)),
+        2 => Ok(Some(Edges::Vincenty)),
+        3 => Ok(Some(Edges::Thomas)),
+        4 => Ok(Some(Edges::Andoyer)),
+        5 => Ok(Some(Edges::Karney)),
+        _ => Err(Error::invalid(format!(
+            "unsupported GeoArrowEdgeType: {code}"
+        ))),
+    }
+}
+
+fn dimension(code: i32) -> Result<Dimension, Error> {
+    match code {
+        0 => Ok(Dimension::XY),
+        1 => Ok(Dimension::XYZ),
+        2 => Ok(Dimension::XYM),
+        3 => Ok(Dimension::XYZM),
+        _ => Err(Error::invalid(format!(
+            "unsupported dimensions in GeoArrowType: {code}"
+        ))),
+    }
+}
+
+/// # Safety
+/// `crs_projjson` must be null or a NUL-terminated UTF-8 string.
+pub(crate) unsafe fn metadata(
+    crs_projjson: *const c_char,
+    edge_type: i32,
+) -> Result<Arc<Metadata>, Error> {
+    let crs = match unsafe { crs_projjson.as_ref() } {
+        None => Crs::default(),
+        Some(_) => {
+            let text = unsafe { std::ffi::CStr::from_ptr(crs_projjson) }
+                .to_str()
+                .map_err(|e| Error::invalid(format!("crs is not valid UTF-8: {e}")))?;
+            let json: serde_json::Value = serde_json::from_str(text)
+                .map_err(|e| Error::invalid(format!("crs is not valid PROJJSON: {e}")))?;
+            Crs::from_projjson(json)
+        }
+    };
+    Ok(Arc::new(Metadata::new(crs, edges(edge_type)?)))
+}
+
+/// Decode a `GeoArrowType` value into the geoarrow-rs type it names.
+///
+/// geoarrow-c encodes the coordinate layout into the type value itself
+/// (`GEOARROW_TYPE_INTERLEAVED_POINT`), so no separate coord_type argument
+/// exists to disagree with it.
+pub(crate) fn data_type(code: i32, metadata: Arc<Metadata>) -> Result<RsType, Error> {
+    if let Some(serialized) = serialized_type(code, &metadata) {
+        return Ok(serialized);
+    }
+    let interleaved = code / 10000;
+    let coords = match interleaved {
+        0 => CoordType::Separated,
+        1 => CoordType::Interleaved,
+        _ => return Err(Error::invalid(format!("unsupported GeoArrowType: {code}"))),
+    };
+    let rest = code % 10000;
+
+    if rest == GEOMETRY {
+        return Ok(RsType::Geometry(
+            GeometryType::new(metadata).with_coord_type(coords),
+        ));
+    }
+    let dim = dimension(rest / 1000)?;
+    if rest % 1000 == BOX {
+        // geoarrow.box is always a struct of doubles, so an interleaved
+        // spelling of it does not exist.
+        if interleaved == 1 {
+            return Err(Error::invalid(format!(
+                "geoarrow.box has no interleaved form: {code}"
+            )));
+        }
+        return Ok(RsType::Rect(BoxType::new(dim, metadata)));
+    }
+    Ok(match rest % 1000 {
+        1 => RsType::Point(PointType::new(dim, metadata).with_coord_type(coords)),
+        2 => RsType::LineString(LineStringType::new(dim, metadata).with_coord_type(coords)),
+        3 => RsType::Polygon(PolygonType::new(dim, metadata).with_coord_type(coords)),
+        4 => RsType::MultiPoint(MultiPointType::new(dim, metadata).with_coord_type(coords)),
+        5 => {
+            RsType::MultiLineString(MultiLineStringType::new(dim, metadata).with_coord_type(coords))
+        }
+        6 => RsType::MultiPolygon(MultiPolygonType::new(dim, metadata).with_coord_type(coords)),
+        7 => RsType::GeometryCollection(
+            GeometryCollectionType::new(dim, metadata).with_coord_type(coords),
+        ),
+        _ => return Err(Error::invalid(format!("unsupported GeoArrowType: {code}"))),
+    })
+}
+
+fn serialized_type(code: i32, metadata: &Arc<Metadata>) -> Option<RsType> {
+    let wkb = || WkbType::new(metadata.clone());
+    let wkt = || WktType::new(metadata.clone());
+    match code {
+        100001 => Some(RsType::Wkb(wkb())),
+        100002 => Some(RsType::LargeWkb(wkb())),
+        100003 => Some(RsType::Wkt(wkt())),
+        100004 => Some(RsType::LargeWkt(wkt())),
+        100005 => Some(RsType::WkbView(wkb())),
+        100006 => Some(RsType::WktView(wkt())),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use geoarrow_schema::CoordType::{Interleaved, Separated};
     use geoarrow_schema::Dimension::{XY, XYM, XYZ, XYZM};
-    use geoarrow_schema::{
-        BoxType, GeometryCollectionType, GeometryType, LineStringType, Metadata,
-        MultiLineStringType, MultiPointType, MultiPolygonType, PointType, PolygonType, WkbType,
-        WktType,
-    };
 
     use super::GeoArrowType::*;
     use super::*;
@@ -224,11 +337,15 @@ mod tests {
     /// literal or multiplier fails here, and the parity test pins the enum to
     /// geoarrow-c. The GEOMETRY and GEOMETRYCOLLECTION rows carry the
     /// invented values, which no parity test covers, so all of them appear.
+    /// Each row also decodes its value back, so `data_type` and `type_code`
+    /// stay inverse over the whole vocabulary.
     #[test]
     fn type_code_matches_the_exported_enum() {
-        fn code_is(data_type: RsType, expected: GeoArrowType) {
+        fn code_is(built: RsType, expected: GeoArrowType) {
             let expected = expected as i32;
-            assert_eq!(type_code(&data_type), expected, "for {expected}");
+            assert_eq!(type_code(&built), expected, "for {expected}");
+            let decoded = data_type(expected, meta()).unwrap();
+            assert_eq!(type_code(&decoded), expected, "decode for {expected}");
         }
 
         code_is(point(XY, Separated), GEOARROW_TYPE_POINT);
@@ -309,5 +426,51 @@ mod tests {
             RsType::WktView(WktType::new(meta())),
             GEOARROW_TYPE_WKT_VIEW,
         );
+    }
+
+    /// The value-to-name mapping, which the roundtrip in `code_is` cannot
+    /// see: a decoder wrong in the same way as `type_code` would still
+    /// roundtrip.
+    #[test]
+    fn decodes_the_extension_name_a_value_names() {
+        fn extension_name(code: i32) -> String {
+            data_type(code, meta())
+                .unwrap()
+                .to_field("geometry", true)
+                .metadata()["ARROW:extension:name"]
+                .clone()
+        }
+        for (code, expected) in [
+            (1, "geoarrow.point"),
+            (2, "geoarrow.linestring"),
+            (3, "geoarrow.polygon"),
+            (4, "geoarrow.multipoint"),
+            (5, "geoarrow.multilinestring"),
+            (6, "geoarrow.multipolygon"),
+            (7, "geoarrow.geometrycollection"),
+            (990, "geoarrow.box"),
+            (991, "geoarrow.geometry"),
+            (100001, "geoarrow.wkb"),
+            (100003, "geoarrow.wkt"),
+        ] {
+            assert_eq!(extension_name(code), expected, "for {code}");
+        }
+    }
+
+    #[test]
+    fn rejects_codes_outside_the_vocabulary() {
+        // 10990 is the interleaved spelling of BOX, which does not exist.
+        for code in [0, -1, 8, 999, 4001, 10990, 20001, 100007] {
+            assert!(data_type(code, meta()).is_err(), "for {code}");
+        }
+    }
+
+    #[test]
+    fn rejects_edge_codes_outside_the_vocabulary() {
+        assert_eq!(edges(0).unwrap(), None, "planar is the absent default");
+        assert_eq!(edges(5).unwrap(), Some(Edges::Karney));
+        for code in [6, -1] {
+            assert!(edges(code).is_err(), "for {code}");
+        }
     }
 }

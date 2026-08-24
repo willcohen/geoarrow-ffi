@@ -228,6 +228,7 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "geoarrow-schema",
+ "serde_json",
 ]
 
 [[package]]
